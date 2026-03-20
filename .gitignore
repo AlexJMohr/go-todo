@@ -1,3 +1,11 @@
 tmp/
 go-todo
 .env
+claude/settings.local.json
+
+# Terraform
+terraform/.terraform/
+terraform/terraform.tfstate
+terraform/terraform.tfstate.backup
+terraform/terraform.tfvars
+terraform/placeholder.zip

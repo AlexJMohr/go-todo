@@ -1,18 +1,29 @@
 package main
 
 import (
+	"embed"
 	"errors"
+	"html/template"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
 	"time"
 
+	"github.com/aws/aws-lambda-go/lambda"
+	ginadapter "github.com/awslabs/aws-lambda-go-api-proxy/gin"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
+
+//go:embed templates/*
+var templatesFS embed.FS
+
+//go:embed assets/*
+var assetsFS embed.FS
 
 type Task struct {
 	ID        uuid.UUID `json:"id" gorm:"primaryKey;default:gen_random_uuid()"`
@@ -33,14 +44,17 @@ func initDB() {
 	db.AutoMigrate(&Task{})
 }
 
-func main() {
-	godotenv.Load(".env")
-
-	initDB()
-
+func setupRouter() *gin.Engine {
 	r := gin.Default()
-	r.LoadHTMLGlob("templates/*")
-	r.Static("/assets", "./assets")
+
+	tmpl := template.Must(template.New("").ParseFS(templatesFS, "templates/*.html"))
+	r.SetHTMLTemplate(tmpl)
+
+	sub, err := fs.Sub(assetsFS, "assets")
+	if err != nil {
+		log.Fatal("failed to sub assets FS:", err)
+	}
+	r.StaticFS("/assets", http.FS(sub))
 
 	r.GET("/", func(ctx *gin.Context) {
 		tasks := []Task{}
@@ -84,8 +98,10 @@ func main() {
 		result := db.First(&task, "id = ?", taskID)
 		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Task not found"})
-		} else {
+			return
+		} else if result.Error != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "DB error"})
+			return
 		}
 
 		task.Completed = !task.Completed
@@ -98,8 +114,21 @@ func main() {
 		c.HTML(http.StatusOK, "task.html", task)
 	})
 
-	err := r.Run()
-	if err != nil {
-		log.Fatal("Failed to start server:", err)
+	return r
+}
+
+func main() {
+	if os.Getenv("AWS_LAMBDA_FUNCTION_NAME") != "" {
+		initDB()
+		r := setupRouter()
+		adapter := ginadapter.NewV2(r)
+		lambda.Start(adapter.ProxyWithContext)
+	} else {
+		godotenv.Load(".env")
+		initDB()
+		r := setupRouter()
+		if err := r.Run(); err != nil {
+			log.Fatal("Failed to start server:", err)
+		}
 	}
 }
