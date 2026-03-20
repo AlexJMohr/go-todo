@@ -1,27 +1,54 @@
 package main
 
 import (
-	"fmt"
+	"errors"
+	"log"
 	"net/http"
+	"os"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/joho/godotenv"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
 )
 
 type Task struct {
-	ID        uuid.UUID `json:"id" binding:"uuid"`
-	Task      string    `json:"task" form:"task" binding:"required"`
-	Completed bool      `json:"completed" default:"false"`
+	ID        uuid.UUID `json:"id" gorm:"primaryKey;default:gen_random_uuid()"`
+	Task      string    `json:"task" form:"task" binding:"required" gorm:"not null"`
+	Completed bool      `json:"completed" default:"false" gorm:"not null;default:false"`
+	CreatedAt time.Time `json:"created_at" gorm:"not null;default:now()"`
 }
 
-var tasks = []Task{}
+var db *gorm.DB
+
+func initDB() {
+	dsn := os.Getenv("DATABASE_URL")
+	var err error
+	db, err = gorm.Open(postgres.Open(dsn))
+	if err != nil {
+		panic("failed to connect database: " + err.Error())
+	}
+	db.AutoMigrate(&Task{})
+}
 
 func main() {
+	godotenv.Load(".env")
+
+	initDB()
+
 	r := gin.Default()
 	r.LoadHTMLGlob("templates/*")
 	r.Static("/assets", "./assets")
 
 	r.GET("/", func(ctx *gin.Context) {
+		tasks := []Task{}
+		result := db.Order("created_at desc").Find(&tasks)
+		if result.Error != nil {
+			ctx.String(http.StatusInternalServerError, "Failed to load tasks: %v", result.Error)
+			return
+		}
 		ctx.HTML(http.StatusOK, "index.html", tasks)
 	})
 
@@ -37,12 +64,15 @@ func main() {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
-		newTask.ID = uuid.New()
-		tasks = append(tasks, newTask)
+		result := db.Create(&newTask)
+		if result.Error != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create task"})
+			return
+		}
 		c.HTML(http.StatusCreated, "task.html", newTask)
 	})
 
-	r.POST("/api/todos/:id", func(c *gin.Context) {
+	r.PATCH("/api/tasks/:id", func(c *gin.Context) {
 		idParam := c.Param("id")
 		taskID, err := uuid.Parse(idParam)
 		if err != nil {
@@ -50,18 +80,26 @@ func main() {
 			return
 		}
 
-		for i, task := range tasks {
-			if task.ID == taskID {
-				tasks[i].Completed = !tasks[i].Completed
-				c.HTML(http.StatusOK, "task.html", tasks[i])
-				return
-			}
+		var task Task
+		result := db.First(&task, "id = ?", taskID)
+		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Task not found"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "DB error"})
 		}
-		c.JSON(http.StatusNotFound, gin.H{"error": "Task not found"})
+
+		task.Completed = !task.Completed
+		result = db.Save(&task)
+		if result.Error != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update task"})
+			return
+		}
+
+		c.HTML(http.StatusOK, "task.html", task)
 	})
 
 	err := r.Run()
 	if err != nil {
-		fmt.Println("Failed to start server:", err)
+		log.Fatal("Failed to start server:", err)
 	}
 }
