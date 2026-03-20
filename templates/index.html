@@ -1,0 +1,41 @@
+<html>
+  <head>
+    <title>Go TODO</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="/assets/style.css" />
+    <script src="https://cdn.jsdelivr.net/npm/htmx.org@2.0.8/dist/htmx.min.js"></script>
+  </head>
+
+  <body>
+    <div class="container">
+      <header>
+        <h1>My Tasks</h1>
+        <p>Keep track of what needs to get done.</p>
+      </header>
+
+      <form
+        class="add-form"
+        hx-post="/api/tasks"
+        hx-target="#todo-list"
+        hx-swap="beforeend"
+        hx-on::after-request="this.reset()"
+      >
+        <input
+          type="text"
+          name="task"
+          placeholder="What needs to be done?"
+          autocomplete="off"
+        />
+        <button type="submit">Add task</button>
+      </form>
+
+      <ul id="todo-list">
+        {{- range . -}}{{template "task.html" .}}{{- end -}}
+      </ul>
+
+      <footer>
+        <p>Made with Go and HTMX by Alex Mohr in 2026</p>
+      </footer>
+    </div>
+  </body>
+</html>

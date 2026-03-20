@@ -1,0 +1,7 @@
+<li class="task{{if .Completed}} completed{{end}}" id="task-{{ .ID }}">
+  <input type="checkbox" {{if .Completed}}checked{{end}}
+    hx-post="/api/todos/{{.ID}}"
+    hx-target="#task-{{ .ID }}"
+    hx-swap="outerHTML">
+  <span class="task-label">{{.Task}}</span>
+</li>
